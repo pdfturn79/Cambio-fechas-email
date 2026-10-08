@@ -168,6 +168,11 @@ function generatePythonScript(emails: Email[]): string {
     attachments: e.attachments.map((a) => ({ name: a.name, type: a.type, data: a.data })),
   }));
 
+  const pythonDict = JSON.stringify(serializable, null, 4)
+    .replace(/true/g, 'True')
+    .replace(/false/g, 'False')
+    .replace(/null/g, 'None');
+
   return `#!/usr/bin/env python3
 """
 Script de inyeccion IMAP generado por Cambio Fechas Email.
@@ -181,7 +186,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from email.utils import format_datetime, make_msgid
 
-EMAILS = ${JSON.stringify(serializable, null, 4)}
+EMAILS = ${pythonDict}
 
 DOMAIN = "${DOMAIN}"
 
