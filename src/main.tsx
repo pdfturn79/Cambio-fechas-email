@@ -4,6 +4,12 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import './style.css';
 
+interface Attachment {
+  name: string;
+  type: string;
+  data: string; // base64
+}
+
 interface Email {
   id: string;
   from: string;
@@ -12,6 +18,7 @@ interface Email {
   body: string;
   date: string;
   includeReceived: boolean;
+  attachments: Attachment[];
 }
 
 const DOMAIN = 'test.local';
@@ -52,6 +59,12 @@ function toBase64(str: string): string {
   return btoa(binString);
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const binString = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+  return btoa(binString);
+}
+
 function generateMessageId(): string {
   try {
     return `<${crypto.randomUUID()}@${DOMAIN}>`;
@@ -60,8 +73,19 @@ function generateMessageId(): string {
   }
 }
 
+function wrapBase64(base64: string, width = 76): string {
+  const parts: string[] = [];
+  for (let i = 0; i < base64.length; i += width) {
+    parts.push(base64.slice(i, i + width));
+  }
+  return parts.join('\r\n');
+}
+
 function generateEml(email: Email): string {
   const date = new Date(email.date);
+  const boundary = `----=${crypto.randomUUID?.().replace(/-/g, '') ?? Date.now().toString(36)}`;
+  const hasAttachments = email.attachments.length > 0;
+
   const headers: string[] = [
     `From: ${email.from}`,
     `To: ${email.to}`,
@@ -76,10 +100,36 @@ function generateEml(email: Email): string {
   }
 
   headers.push('MIME-Version: 1.0');
-  headers.push('Content-Type: text/plain; charset="utf-8"');
-  headers.push('Content-Transfer-Encoding: base64');
 
-  return `${headers.join('\r\n')}\r\n\r\n${toBase64(email.body)}`;
+  if (hasAttachments) {
+    headers.push(`Content-Type: multipart/mixed;\r\n\tboundary="${boundary}"`);
+  } else {
+    headers.push('Content-Type: text/plain; charset="utf-8"');
+    headers.push('Content-Transfer-Encoding: base64');
+  }
+
+  let body = '';
+  if (hasAttachments) {
+    body += `This is a multi-part message in MIME format.\r\n\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Type: text/plain; charset="utf-8"\r\n`;
+    body += `Content-Transfer-Encoding: base64\r\n\r\n`;
+    body += `${wrapBase64(toBase64(email.body))}\r\n\r\n`;
+
+    for (const att of email.attachments) {
+      body += `--${boundary}\r\n`;
+      body += `Content-Type: ${att.type || 'application/octet-stream'}; name="${att.name}"\r\n`;
+      body += `Content-Disposition: attachment; filename="${att.name}"\r\n`;
+      body += `Content-Transfer-Encoding: base64\r\n\r\n`;
+      body += `${wrapBase64(att.data)}\r\n\r\n`;
+    }
+
+    body += `--${boundary}--\r\n`;
+  } else {
+    body += wrapBase64(toBase64(email.body));
+  }
+
+  return `${headers.join('\r\n')}\r\n\r\n${body}`;
 }
 
 function slugify(name: string): string {
@@ -115,16 +165,18 @@ function generatePythonScript(emails: Email[]): string {
     body: e.body,
     date: new Date(e.date).toISOString(),
     include_received: e.includeReceived,
+    attachments: e.attachments.map((a) => ({ name: a.name, type: a.type, data: a.data })),
   }));
 
   return `#!/usr/bin/env python3
 """
 Script de inyeccion IMAP generado por Cambio Fechas Email.
-Ejecuta en tu PC para subir los correos a la carpeta Sent de tu servidor IMAP.
+Ejecuta en tu PC para subir los correos a la carpeta que elijas de tu servidor IMAP.
 """
 import imaplib
 import getpass
 import random
+import base64
 from datetime import datetime
 from email.message import EmailMessage
 from email.utils import format_datetime, make_msgid
@@ -149,7 +201,18 @@ def construir_mensaje(data):
             f"{format_datetime(fecha)}"
         )
         msg["Received"] = recibido
+
     msg.set_content(data["body"])
+
+    for att in data.get("attachments", []):
+        contenido = base64.b64decode(att["data"])
+        msg.add_attachment(
+            contenido,
+            maintype="application",
+            subtype="octet-stream",
+            filename=att["name"],
+        )
+
     return msg, fecha
 
 
@@ -158,7 +221,7 @@ def main():
     port = input("Puerto [993]: ").strip() or "993"
     usuario = input("Usuario: ").strip()
     clave = getpass.getpass("Contraseña: ")
-    carpeta = input("Carpeta de Enviados [Sent]: ").strip() or "Sent"
+    carpeta = input("Carpeta destino [INBOX]: ").strip() or "INBOX"
 
     try:
         imap = imaplib.IMAP4_SSL(host, int(port))
@@ -199,6 +262,7 @@ function App() {
     body: '',
     date: defaultDate,
     includeReceived: true,
+    attachments: [] as Attachment[],
   });
   const [dateError, setDateError] = useState('');
 
@@ -212,11 +276,36 @@ function App() {
     return true;
   };
 
-  const updateForm = (field: keyof typeof form, value: string | boolean) => {
+  const updateForm = (field: keyof typeof form, value: string | boolean | Attachment[]) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     if (field === 'date' && typeof value === 'string') {
       validateDate(value);
     }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newAttachments: Attachment[] = [];
+    for (const file of Array.from(files)) {
+      const buffer = await file.arrayBuffer();
+      newAttachments.push({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        data: arrayBufferToBase64(buffer),
+      });
+    }
+
+    setForm((prev) => ({ ...prev, attachments: [...prev.attachments, ...newAttachments] }));
+    e.target.value = '';
+  };
+
+  const removeAttachment = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      attachments: prev.attachments.filter((_, i) => i !== index),
+    }));
   };
 
   const addEmail = () => {
@@ -231,10 +320,11 @@ function App() {
       body: form.body,
       date: form.date,
       includeReceived: form.includeReceived,
+      attachments: form.attachments,
     };
 
     setEmails((prev) => [...prev, email]);
-    setForm((prev) => ({ ...prev, subject: '', body: '' }));
+    setForm((prev) => ({ ...prev, subject: '', body: '', attachments: [] }));
   };
 
   const removeEmail = (id: string) => {
@@ -267,6 +357,7 @@ function App() {
         body: 'Hola, tengo una duda con la factura del mes pasado. Gracias.',
         date: defaultDate,
         includeReceived: true,
+        attachments: [],
       },
       {
         id: crypto.randomUUID?.() ?? `${Date.now()}-2`,
@@ -276,6 +367,7 @@ function App() {
         body: 'Adjunto el presupuesto con las modificaciones solicitadas.',
         date: defaultDate,
         includeReceived: true,
+        attachments: [],
       },
     ];
     setEmails((prev) => [...prev, ...samples]);
@@ -287,7 +379,7 @@ function App() {
         <p className="eyebrow">Cambio Fechas Email</p>
         <h1>Generador de correos de prueba</h1>
         <p className="copy">
-          Crea archivos .eml con fechas entre 1 y 3 meses atrás, y genera un script Python para inyectarlos por IMAP.
+          Crea archivos .eml con fechas entre 1 y 3 meses atrás, adjuntos opcionales y genera un script Python para inyectarlos por IMAP.
         </p>
 
         <div className="form">
@@ -336,6 +428,28 @@ function App() {
             />
           </div>
 
+          <div className="field">
+            <label htmlFor="attachments">Adjuntos</label>
+            <input
+              id="attachments"
+              type="file"
+              multiple
+              onChange={handleFileChange}
+            />
+            {form.attachments.length > 0 && (
+              <ul className="attachment-list">
+                {form.attachments.map((att, idx) => (
+                  <li key={idx} className="attachment-item">
+                    <span>{att.name}</span>
+                    <button className="button danger small" onClick={() => removeAttachment(idx)}>
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="field-row">
             <div className="field">
               <label htmlFor="date">Fecha</label>
@@ -379,6 +493,7 @@ function App() {
                     <span className="email-subject">{email.subject}</span>
                     <span className="email-meta">
                       {email.from} → {email.to} · {new Date(email.date).toLocaleString('es-ES')}
+                      {email.attachments.length > 0 && ` · ${email.attachments.length} adjunto${email.attachments.length !== 1 ? 's' : ''}`}
                     </span>
                   </div>
                   <button className="button danger" onClick={() => removeEmail(email.id)}>

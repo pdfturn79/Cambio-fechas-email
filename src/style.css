@@ -186,6 +186,32 @@ h2 {
   background: #fecaca;
 }
 
+.button.small {
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+
+.attachment-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #374151;
+  width: fit-content;
+}
+
 .email-list {
   display: flex;
   flex-direction: column;
