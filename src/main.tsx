@@ -151,7 +151,7 @@ function filenameFor(index: number, email: Email): string {
 function useDateRange(): { min: Date; max: Date } {
   return useMemo(() => {
     const now = new Date();
-    const max = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate(), now.getHours(), now.getMinutes());
+    const max = now;
     const min = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate(), now.getHours(), now.getMinutes());
     return { min, max };
   }, []);
@@ -384,7 +384,7 @@ function App() {
         <p className="eyebrow">Cambio Fechas Email</p>
         <h1>Generador de correos de prueba</h1>
         <p className="copy">
-          Crea archivos .eml con fechas entre 1 y 3 meses atrás, adjuntos opcionales y genera un script Python para inyectarlos por IMAP.
+          Crea archivos .eml con fechas de hasta 3 meses atrás (incluyendo hoy), adjuntos opcionales y genera un script Python para inyectarlos por IMAP.
         </p>
 
         <div className="form">
